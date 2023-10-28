@@ -12,6 +12,7 @@ use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::arch::asm;
+use core::ops::Range;
 use lazy_static::*;
 use riscv::register::satp;
 
@@ -52,6 +53,7 @@ impl MemorySet {
         self.page_table.token()
     }
     /// Assume that no conflicts.
+    /// 创建一个只保存需要映射的逻辑段
     pub fn insert_framed_area(
         &mut self,
         start_va: VirtAddr,
@@ -262,10 +264,56 @@ impl MemorySet {
             false
         }
     }
+
+    /// find virtual page number intersect
+    pub fn is_conflict(&self, virt_mem_range: Range<usize>) -> bool {
+        let start_va: VirtAddr = virt_mem_range.start.into();
+        let end_va: VirtAddr = virt_mem_range.end.into();
+
+        let start_vpn: VirtPageNum = start_va.into();
+        let end_vpn: VirtPageNum = end_va.into();
+
+        for area in &self.areas {
+            let ar = &area.vpn_range;
+
+            if ar.get_start() >= end_vpn { continue }
+            if ar.get_end() <= start_vpn { continue }
+
+            return true
+        }
+        false
+    }
+
+    /// recycle an area
+    pub fn recycle_map_area(&mut self, start_va: VirtAddr, end_va: VirtAddr) -> bool {
+        let recycle_start_vpn: VirtPageNum = start_va.into();
+        let recycle_end_vpn: VirtPageNum = end_va.into();
+
+        let mut mark_remove: isize = -1;
+
+        for (idx, area) in self.areas.iter_mut().enumerate() {
+            let area_start = area.vpn_range.get_start();
+            let area_end = area.vpn_range.get_end();
+            if area_start == recycle_start_vpn && area_end == recycle_end_vpn {
+                mark_remove = idx as isize;
+                area.unmap(&mut self.page_table);
+                break
+            }
+        }
+
+        if mark_remove != -1 {
+            self.areas.remove(mark_remove as usize);
+            true
+        } else {
+            false
+        }
+    }
 }
 /// map area structure, controls a contiguous piece of virtual memory
 pub struct MapArea {
     vpn_range: VPNRange,
+    // 只保存了虚拟页号和物理页帧的映射，不能得知虚拟页表之间的关系
+    // 其中除了包含帧映射，还包含了恒等映射
     data_frames: BTreeMap<VirtPageNum, FrameTracker>,
     map_type: MapType,
     map_perm: MapPermission,
@@ -287,8 +335,11 @@ impl MapArea {
             map_perm,
         }
     }
+    /// 创建一个物理页帧或直指某一个物理页帧
+    /// 将该页帧映射到当前逻辑段和外部的页表中
     pub fn map_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
         let ppn: PhysPageNum;
+        // 先放到 MapArea 的 data_frames 里
         match self.map_type {
             MapType::Identical => {
                 ppn = PhysPageNum(vpn.0);
@@ -300,6 +351,7 @@ impl MapArea {
             }
         }
         let pte_flags = PTEFlags::from_bits(self.map_perm.bits).unwrap();
+        // 再映射到 page_table 里
         page_table.map(vpn, ppn, pte_flags);
     }
     #[allow(unused)]

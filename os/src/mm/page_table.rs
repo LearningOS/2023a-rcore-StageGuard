@@ -3,6 +3,7 @@
 use super::{frame_alloc, FrameTracker, PhysPageNum, StepByOne, VirtAddr, VirtPageNum};
 use alloc::vec;
 use alloc::vec::Vec;
+use core::mem::transmute;
 use bitflags::*;
 
 bitflags! {
@@ -170,4 +171,20 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
         start = end_va.into();
     }
     v
+}
+
+/// translate a userspace ptr to framed physics page address pointer
+/// TODO: paging for big data
+pub fn translate_user_space_ptr<T>(token: usize, ptr: *const T, size: usize) -> &'static mut T {
+    let page_table = PageTable::from_token(token);
+    let va: VirtAddr = (ptr as usize).into();
+    let page_offset = va.page_offset();
+
+    let ppn = page_table.translate(va.floor().into()).unwrap().ppn();
+
+    let pp_slice = ppn.get_bytes_array();
+    if size > pp_slice.len() - page_offset {
+        panic!("object is out of bound of physics frame wheres paging is not implemented, ppn: {:?}, offset: {}, obj size: {}", ppn, page_offset, size)
+    }
+    unsafe { transmute::<&mut u8, &mut T>(pp_slice.get_unchecked_mut(page_offset)) }
 }

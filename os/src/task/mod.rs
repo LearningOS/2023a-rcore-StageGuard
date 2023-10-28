@@ -23,6 +23,8 @@ use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
 
 pub use context::TaskContext;
+use crate::config::{MAX_SYSCALL_NUM, PAGE_SIZE};
+use crate::mm::MapPermission;
 
 /// The task manager, where all the tasks are managed.
 ///
@@ -101,6 +103,53 @@ impl TaskManager {
         let mut inner = self.inner.exclusive_access();
         let cur = inner.current_task;
         inner.tasks[cur].task_status = TaskStatus::Exited;
+    }
+
+    /// Get syscall stat of current running task
+    fn get_current_task_syscall_stat(&self) -> Option<(TaskStatus, [u32; MAX_SYSCALL_NUM])> {
+        let inner = self.inner.exclusive_access();
+        let current = &inner.tasks[inner.current_task];
+
+        Some((current.task_status,
+              current.syscall_statistics))
+    }
+
+    /// Increment syscall stat to current running task
+    fn increment_syscall_stat(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+
+        if inner.tasks[current].task_status != TaskStatus::Running { return }
+        inner.tasks[current].syscall_statistics[syscall_id] += 1;
+    }
+
+    /// Apply for a new virtual memory area to current task
+    fn mmap_new_memory_area(&self, start_va: usize, len: usize, perm: MapPermission) -> bool {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        let mem_set = &mut inner.tasks[current].memory_set;
+
+        let start = (start_va / PAGE_SIZE) * PAGE_SIZE;
+        let mut end = (start_va + len) / PAGE_SIZE * PAGE_SIZE;
+        if (start + len) % PAGE_SIZE > 0 { end += PAGE_SIZE }
+
+        if mem_set.is_conflict(start..end) { return false }
+
+        mem_set.insert_framed_area(start.into(), end.into(), perm);
+        true
+    }
+
+    /// recycle virtual memory area of current task
+    fn munmap_memory_area(&self, start_va: usize, len: usize) -> bool {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        let mem_set = &mut inner.tasks[current].memory_set;
+
+        let start = (start_va / PAGE_SIZE) * PAGE_SIZE;
+        let mut end = (start_va + len) / PAGE_SIZE * PAGE_SIZE;
+        if (start + len) % PAGE_SIZE > 0 { end += PAGE_SIZE }
+
+        mem_set.recycle_map_area(start.into(), end.into())
     }
 
     /// Find next task to run and return task id.
@@ -191,6 +240,40 @@ pub fn exit_current_and_run_next() {
 /// Get the current 'Running' task's token.
 pub fn current_user_token() -> usize {
     TASK_MANAGER.get_current_token()
+}
+
+/// Apply for a new virtual memory area to current task
+pub fn mmap_memory_area_for_current(start_va: usize, len: usize, prot: usize) -> bool {
+    // start is not aligned to PAGE_SIZE
+    if start_va % PAGE_SIZE != 0 { return false }
+
+    let mut perm = MapPermission::U;
+
+    if prot & !0x7 != 0 { return false }
+    if prot & 0x7 == 0 { return false }
+
+    if prot & 0b1 == 1 { perm |= MapPermission::R; }
+    if prot & 0b10 == 2 { perm |= MapPermission::W; }
+    if prot & 0b100 == 4 { perm |= MapPermission::X; }
+
+    TASK_MANAGER.mmap_new_memory_area(start_va, len, perm)
+}
+
+/// Apply for a new virtual memory area to current task
+pub fn munmap_memory_area_for_current(start_va: usize, len: usize) -> bool {
+    // start is not aligned to PAGE_SIZE
+    if start_va % PAGE_SIZE != 0 { return false }
+
+    TASK_MANAGER.munmap_memory_area(start_va, len)
+}
+
+/// Increment syscall stat to current running task
+pub fn increment_syscall_stat(syscall_id: usize) {
+    TASK_MANAGER.increment_syscall_stat(syscall_id);
+}
+/// Get syscall stat of current running task
+pub fn get_current_task_syscall_stat() -> Option<(TaskStatus, [u32; MAX_SYSCALL_NUM])> {
+    TASK_MANAGER.get_current_task_syscall_stat()
 }
 
 /// Get the current 'Running' task's trap contexts.
