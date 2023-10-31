@@ -10,7 +10,7 @@ use crate::{
         suspend_current_and_run_next, TaskStatus,
     },
 };
-use crate::task::{get_current_task_syscall_stat, mmap_memory_area_for_current, munmap_memory_area_for_current};
+use crate::task::{mmap_memory_area_for_current, munmap_memory_area_for_current};
 use crate::timer::{get_time_ms, get_time_us};
 
 #[repr(C)]
@@ -144,14 +144,15 @@ pub fn sys_task_info(ti: *mut TaskInfo) -> isize {
     );
     let translated = translated_refmut(current_user_token(), ti);
 
-    if let Some((status , statistics)) = get_current_task_syscall_stat() {
-        *translated = TaskInfo {
-            status: status,
-            syscall_times: statistics,
-            time: get_time_ms(),
-        };
-        0
-    } else { -1 }
+    let task = current_task().unwrap();
+    let inner = task.inner_exclusive_access();
+
+    *translated = TaskInfo {
+        status: inner.task_status,
+        syscall_times: inner.syscall_statistics.clone(),
+        time: get_time_ms() - inner.first_dispatch_time,
+    };
+    0
 }
 
 /// YOUR JOB: Implement mmap.

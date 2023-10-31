@@ -69,6 +69,9 @@ pub struct TaskControlBlockInner {
     /// Program break
     pub program_brk: usize,
 
+    /// First dispatch time
+    pub first_dispatch_time: usize,
+
     /// The task syscall statistics
     pub syscall_statistics: [u32; MAX_SYSCALL_NUM],
 }
@@ -121,6 +124,7 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    first_dispatch_time: 0,
                     syscall_statistics: [0; MAX_SYSCALL_NUM]
                 })
             },
@@ -195,6 +199,7 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    first_dispatch_time: 0,
                     syscall_statistics: [0; MAX_SYSCALL_NUM]
                 })
             },
@@ -241,6 +246,7 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    first_dispatch_time: 0,
                     syscall_statistics: [0; MAX_SYSCALL_NUM]
                 })
             },
