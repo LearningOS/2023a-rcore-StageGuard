@@ -36,7 +36,7 @@ pub use processor::{
     current_task, current_trap_cx, current_user_token, run_tasks, schedule, take_current_task,
     Processor,
 };
-use crate::config::{MAX_SYSCALL_NUM, PAGE_SIZE};
+use crate::config::PAGE_SIZE;
 use crate::mm::MapPermission;
 
 /// Suspend the current 'Running' task and run the next task in task list.
@@ -158,14 +158,6 @@ pub fn increment_syscall_stat(syscall_id: usize) {
 
     if inner.task_status != TaskStatus::Running { return }
     inner.syscall_statistics[syscall_id] += 1;
-}
-/// Get syscall stat of current running task
-pub fn get_current_task_syscall_stat() -> Option<(TaskStatus, [u32; MAX_SYSCALL_NUM])> {
-    let task = current_task().unwrap();
-    let inner = task.inner_exclusive_access();
-
-    Some((inner.task_status.clone(),
-          inner.syscall_statistics.clone()))
 }
 
 lazy_static! {
