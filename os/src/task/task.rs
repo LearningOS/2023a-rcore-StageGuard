@@ -1,7 +1,6 @@
 //! Types related to task management & Functions for completely changing TCB
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
-use crate::config::TRAP_CONTEXT_BASE;
 use crate::fs::{File, Stdin, Stdout};
 use crate::config::{MAX_SYSCALL_NUM, TRAP_CONTEXT_BASE};
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
@@ -241,6 +240,7 @@ impl TaskControlBlock {
                     syscall_statistics: [0; MAX_SYSCALL_NUM],
                     stride: 0,
                     priority: 16,
+
                 })
             },
         });
@@ -290,6 +290,14 @@ impl TaskControlBlock {
                     syscall_statistics: [0; MAX_SYSCALL_NUM],
                     stride: 0,
                     priority: 16,
+                    fd_table: vec![
+                        // 0 -> stdin
+                        Some(Arc::new(Stdin)),
+                        // 1 -> stdout
+                        Some(Arc::new(Stdout)),
+                        // 2 -> stderr
+                        Some(Arc::new(Stdout)),
+                    ]
                 })
             },
         });
