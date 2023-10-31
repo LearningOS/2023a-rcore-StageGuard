@@ -74,6 +74,14 @@ pub struct TaskControlBlockInner {
 
     /// The task syscall statistics
     pub syscall_statistics: [u32; MAX_SYSCALL_NUM],
+
+    /// stride
+    pub stride: usize,
+
+    /// pass
+    pub priority: usize,
+
+
 }
 
 impl TaskControlBlockInner {
@@ -125,7 +133,9 @@ impl TaskControlBlock {
                     heap_bottom: user_sp,
                     program_brk: user_sp,
                     first_dispatch_time: 0,
-                    syscall_statistics: [0; MAX_SYSCALL_NUM]
+                    syscall_statistics: [0; MAX_SYSCALL_NUM],
+                    stride: 0,
+                    priority: 16,
                 })
             },
         };
@@ -200,7 +210,9 @@ impl TaskControlBlock {
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
                     first_dispatch_time: 0,
-                    syscall_statistics: [0; MAX_SYSCALL_NUM]
+                    syscall_statistics: [0; MAX_SYSCALL_NUM],
+                    stride: 0,
+                    priority: 16,
                 })
             },
         });
@@ -247,7 +259,9 @@ impl TaskControlBlock {
                     heap_bottom: user_sp,
                     program_brk: user_sp,
                     first_dispatch_time: 0,
-                    syscall_statistics: [0; MAX_SYSCALL_NUM]
+                    syscall_statistics: [0; MAX_SYSCALL_NUM],
+                    stride: 0,
+                    priority: 16,
                 })
             },
         });
