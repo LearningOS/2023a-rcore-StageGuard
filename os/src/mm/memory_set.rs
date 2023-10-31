@@ -9,6 +9,7 @@ use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::arch::asm;
+use core::ops::Range;
 use lazy_static::*;
 use riscv::register::satp;
 
@@ -313,6 +314,50 @@ impl MemorySet {
             .find(|area| area.vpn_range.get_start() == start.floor())
         {
             area.append_to(&mut self.page_table, new_end.ceil());
+            true
+        } else {
+            false
+        }
+    }
+
+    /// find virtual page number intersect
+    pub fn is_conflict(&self, virt_mem_range: Range<usize>) -> bool {
+        let start_va: VirtAddr = virt_mem_range.start.into();
+        let end_va: VirtAddr = virt_mem_range.end.into();
+
+        let start_vpn: VirtPageNum = start_va.into();
+        let end_vpn: VirtPageNum = end_va.into();
+
+        for area in &self.areas {
+            let ar = &area.vpn_range;
+
+            if ar.get_start() >= end_vpn { continue }
+            if ar.get_end() <= start_vpn { continue }
+
+            return true
+        }
+        false
+    }
+
+    /// recycle an area
+    pub fn recycle_map_area(&mut self, start_va: VirtAddr, end_va: VirtAddr) -> bool {
+        let recycle_start_vpn: VirtPageNum = start_va.into();
+        let recycle_end_vpn: VirtPageNum = end_va.into();
+
+        let mut mark_remove: isize = -1;
+
+        for (idx, area) in self.areas.iter_mut().enumerate() {
+            let area_start = area.vpn_range.get_start();
+            let area_end = area.vpn_range.get_end();
+            if area_start == recycle_start_vpn && area_end == recycle_end_vpn {
+                mark_remove = idx as isize;
+                area.unmap(&mut self.page_table);
+                break
+            }
+        }
+
+        if mark_remove != -1 {
+            self.areas.remove(mark_remove as usize);
             true
         } else {
             false
