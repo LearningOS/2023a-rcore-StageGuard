@@ -390,6 +390,7 @@ impl DiskInode {
 }
 /// A directory entry
 #[repr(C)]
+#[derive(Copy, Clone, Debug)]
 pub struct DirEntry {
     name: [u8; NAME_LENGTH_LIMIT + 1],
     inode_id: u32,

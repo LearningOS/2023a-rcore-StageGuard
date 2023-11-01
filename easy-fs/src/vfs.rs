@@ -1,8 +1,11 @@
+use alloc::alloc::dealloc;
+use alloc::fmt::format;
+use alloc::format;
 use super::{
     block_cache_sync_all, get_block_cache, BlockDevice, DirEntry, DiskInode, DiskInodeType,
     EasyFileSystem, DIRENT_SZ,
 };
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use spin::{Mutex, MutexGuard};
@@ -137,6 +140,143 @@ impl Inode {
             self.block_device.clone(),
         )))
         // release efs lock automatically by compiler
+    }
+    /// Make hardlink, returns a new inode representing the link node
+    pub fn link_at(&self, src: &str, dst: &str) -> Option<Arc<Inode>> {
+        let mut fs = self.fs.lock();
+
+        let src_inode_id = self.read_disk_inode(|disk_inode| self.find_inode_id(src, disk_inode));
+        let dst_inode_id = self.read_disk_inode(|disk_inode| self.find_inode_id(dst, disk_inode));
+        // source inode is not found or dst inode is found
+        if src_inode_id.is_none() || dst_inode_id.is_some() { return None }
+
+        let src_inode_id = src_inode_id.unwrap();
+        // append hardlink to current disk_inode of directory
+        self.modify_disk_inode(|root_inode| {
+            let file_count = (root_inode.size as usize) / DIRENT_SZ;
+            let new_size = (file_count + 1) * DIRENT_SZ;
+            self.increase_size(new_size as u32, root_inode, &mut fs);
+            let dirent = DirEntry::new(dst, src_inode_id);
+            root_inode.write_at(
+                file_count * DIRENT_SZ,
+                dirent.as_bytes(),
+                &self.block_device,
+            );
+        });
+
+        let (block_id, block_offset) = fs.get_disk_inode_pos(src_inode_id);
+        block_cache_sync_all();
+        Some(Arc::new(Self::new(
+            block_id,
+            block_offset,
+            self.fs.clone(),
+            self.block_device.clone(),
+        )))
+    }
+    /// unlink hardlink, returns true if succeed.
+    pub fn unlink_at(&self, name: &str) -> bool {
+        let src_inode_id = self.read_disk_inode(|disk_inode| self.find_inode_id(name, disk_inode));
+        if src_inode_id.is_none() { return false }
+        let src_inode_id = src_inode_id.unwrap();
+
+        let all_links = self.read_disk_inode(|root_node: &DiskInode| {
+            assert!(root_node.is_dir());
+            let file_count = (root_node.size as usize) / DIRENT_SZ;
+            let mut links = Vec::new();
+            let mut dirent = DirEntry::empty();
+            for i in 0..file_count {
+                assert_eq!(
+                    root_node.read_at(DIRENT_SZ * i, dirent.as_bytes_mut(), &self.block_device,),
+                    DIRENT_SZ,
+                );
+                if dirent.inode_id() == src_inode_id {
+                    links.push((i, dirent.clone()));
+                }
+            }
+            links
+        });
+
+        // only 1 hardlink, the file name must be the provided
+        // and the data block and file index block should be cleared.
+        if all_links.len() == 1 {
+            let single = all_links[0];
+            assert_eq!(single.1.name(), name);
+            let (block_id, block_offset) = {
+                let fs = self.fs.lock();
+                fs.get_disk_inode_pos(single.1.inode_id())
+            };
+
+            // clear the file inode
+            Self::new(
+                block_id,
+                block_offset,
+                self.fs.clone(),
+                self.block_device.clone()
+            ).clear();
+        }
+
+        // remove file index from inode
+        self.modify_disk_inode(|root_node| {
+            for (idx, dirent) in &all_links {
+                if dirent.name() == name {
+                    root_node.write_at(idx * DIRENT_SZ, DirEntry::empty().as_bytes(), &self.block_device);
+                    return true
+                }
+            }
+            false
+        })
+    }
+    /// get inode and hardlink count
+    /// 因为目前目录就一层结构，所以直接用 ROOT_INODE 查找硬链接数量
+    pub fn stat(&self) -> (u32, usize, u8) {
+
+        // TODO: 如果是多级目录需要改成 parent
+        let parent = EasyFileSystem::root_inode(&self.fs.clone());
+
+        let fs = self.fs.lock();
+        parent.read_disk_inode(|root_node: &DiskInode| {
+            assert!(root_node.is_dir());
+
+            let mut inode_id: u32 = 0;
+            let mut inode_type: u8 = 0;
+            let mut links: usize = 0;
+
+            let file_count = (root_node.size as usize) / DIRENT_SZ;
+            let mut dirent = DirEntry::empty();
+
+            // 根据 block_id 和 block_offset 确定 DirEnt
+            for i in 0..file_count {
+                assert_eq!(
+                    root_node.read_at(DIRENT_SZ * i, dirent.as_bytes_mut(), &self.block_device,),
+                    DIRENT_SZ,
+                );
+                let (block_id, block_offset) = fs.get_disk_inode_pos(dirent.inode_id());
+                if block_id as usize == self.block_id && block_offset == self.block_offset {
+                    inode_id = dirent.inode_id();
+
+                    inode_type = Self::new(
+                        block_id,
+                        block_offset,
+                        self.fs.clone(),
+                        self.block_device.clone()
+                    ).read_disk_inode(|node| if node.is_file() { 0 } else { 1 });
+
+                    break
+                }
+            }
+
+            for i in 0..file_count {
+                assert_eq!(
+                    root_node.read_at(DIRENT_SZ * i, dirent.as_bytes_mut(), &self.block_device,),
+                    DIRENT_SZ,
+                );
+                if dirent.inode_id() == inode_id {
+                    links += 1;
+                }
+            }
+
+            (inode_id, links, inode_type)
+        })
     }
     /// List inodes under current inode
     pub fn ls(&self) -> Vec<String> {
